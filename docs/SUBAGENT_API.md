@@ -28,10 +28,20 @@ sub-agent authors have one path that won't move under them.
 ## API version
 
 The shim exposes `arc.subagent_api.__api_version__` as a `(major, minor)`
-tuple. **0.1** at time of writing.
+tuple. **0.2** at time of writing.
 
-- **Patch / minor bump (0.1 → 0.2):** additive — new optional fields on
-  `SubAgentSpec`, new symbols. Existing specs keep working unchanged.
+### Version history
+
+- **0.2** (2026-05-24) — added `SubAgentSpec.params: dict[str, Any]` field
+  for provider-specific config (e.g., `vertex_gemini`'s `project_id` +
+  `region`). Additive — v0.1 specs still work (default factory = empty
+  dict).
+- **0.1** — initial release.
+
+### Breakage policy
+
+- **Patch / minor bump (0.1 → 0.2 → 0.3):** additive — new optional fields
+  on `SubAgentSpec`, new symbols. Existing specs keep working unchanged.
 - **Major bump (0.x → 1.x):** breaking. Renames, signature changes, removed
   fields. arc will emit a deprecation warning for at least one release
   before the bump.
@@ -40,7 +50,7 @@ If your spec needs a specific minimum API version, assert it:
 
 ```python
 from arc.subagent_api import __api_version__
-assert __api_version__ >= (0, 1), "needs arc sub-agent API ≥ 0.1"
+assert __api_version__ >= (0, 2), "needs arc sub-agent API ≥ 0.2 for params field"
 ```
 
 ## The spec
@@ -50,7 +60,7 @@ assert __api_version__ >= (0, 1), "needs arc sub-agent API ≥ 0.1"
 class SubAgentSpec:
     name: str                              # registry key, used as subagent_<name> tool
     description: str                       # shown to the parent agent in the tool schema
-    provider: str                          # "anthropic" | "gemini" | "ollama" | "llama_cpp" | ...
+    provider: str                          # "anthropic" | "gemini" | "vertex_gemini" | "ollama" | "llama_cpp" | ...
     model: str                             # provider-specific model id
     system_prompt: str                     # child's system prompt
     tools: tuple[str, ...]                 # tool names the child gets access to
@@ -62,7 +72,33 @@ class SubAgentSpec:
     max_dispatches_per_session: int = 5    # parent-loop guard
     max_consecutive_failures: int = 2      # circuit breaker
     max_transient_retries: int = 2         # runner-internal retry for network/rate-limit/5xx
+    params: dict[str, Any] = field(default_factory=dict)  # provider-specific config (v0.2+)
 ```
+
+### The `params` field (v0.2+)
+
+Provider-specific config that gets merged into the child's
+`ProviderConfig.params` at dispatch time. Use this when your sub-agent
+pins a provider that needs extra config beyond `api_key_env` / `base_url`.
+
+Examples:
+
+- **`vertex_gemini`** needs `project_id` and `region`:
+  ```python
+  SubAgentSpec(
+      ...,
+      provider="vertex_gemini",
+      params={"vertex_project_id": "my-gcp-project", "vertex_region": "us-east1"},
+  )
+  ```
+
+- **Future providers** can read whatever they want from
+  `cfg.params.get(...)`. arc-core doesn't validate the contents.
+
+Spec authors typically populate `params` in `build()` from user config
+keys (per design 0022's "Config injection" pattern). Most sub-agents
+that use stock providers (anthropic / gemini / ollama) can leave
+`params={}`.
 
 Frozen dataclass. Equality compares by field. The Registry merges
 field-level overrides from the user's `subagents:` config block on top of
